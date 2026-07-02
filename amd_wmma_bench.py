@@ -24,7 +24,8 @@ def _setup_path() -> None:
 
 
 def _realized_ast(r):
-  from tinygrad import Tensor, UOp, Ops
+  from tinygrad import Tensor
+  from tinygrad.uop.ops import UOp, Ops
   from tinygrad.device import Buffer
   from tinygrad.engine.realize import run_linear
 
