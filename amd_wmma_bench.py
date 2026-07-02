@@ -69,14 +69,14 @@ def _wmma_triggered(n: int) -> bool:
 
 def _autogen_uses_tc(n: int) -> bool:
   _setup_path()
-  from tinygrad import Tensor, dtypes
+  from tinygrad import Tensor, dtypes, Device
   from tinygrad.codegen import to_program
   from tinygrad.codegen.opt import OptOps
 
   a = Tensor.randn(n, n, dtype=dtypes.half).realize()
   b = Tensor.randn(n, n, dtype=dtypes.half).realize()
   ast, _ = _realized_ast(a @ b)
-  pu = to_program(ast)
+  pu = to_program(ast, Device[Device.DEFAULT].renderer)
   return any(o.op is OptOps.TC for o in pu.src[0].arg.applied_opts)
 
 
