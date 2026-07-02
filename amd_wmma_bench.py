@@ -78,6 +78,7 @@ def _program_stats(n: int, tc: int | None = None):
   from tinygrad import Tensor, dtypes, Device, Context
   from tinygrad.codegen import to_program
   from tinygrad.codegen.opt import OptOps
+  from tinygrad.device import CompileError
   from tinygrad.renderer.isa.amd import AMDOps
   from tinygrad.uop.ops import Ops
 
@@ -87,16 +88,34 @@ def _program_stats(n: int, tc: int | None = None):
     b = Tensor.empty(n, n, dtype=dtypes.half, device="AMD")
     ast, _ = _realized_ast(_matmul_expr(a, b))
     ren = Device[Device.DEFAULT].renderer
-    prg = to_program(ast, ren)
+    try:
+      prg = to_program(ast, ren)
+    except CompileError as e:
+      return None, False, 0, 0, str(e)
   lin = list(prg.src[1].src)
   wmma = sum(1 for u in lin if u.op is Ops.INS and u.arg is AMDOps.WMMA)
   mulacc = sum(1 for u in lin if u.op is Ops.INS and u.arg is AMDOps.MULACC)
   uses_tc = any(o.op is OptOps.TC for o in prg.src[0].arg.applied_opts)
-  return prg, uses_tc, wmma, mulacc
+  return prg, uses_tc, wmma, mulacc, None
 
 
 def _autogen_uses_tc(n: int) -> bool:
   return _program_stats(n)[1]
+
+
+def _tc_tag(n: int, tc: int) -> str:
+  prg, uses_tc, wmma, _, err = _program_stats(n, tc)
+  if err:
+    return f"compile failed: {err}"
+  note = "autogen TC" if uses_tc else "no TC opt"
+  ren = type(prg.arg).__name__ if prg else ""
+  if wmma:
+    return f"{note}, WMMA={wmma}"
+  _setup_path()
+  from tinygrad import Device
+  if type(Device[Device.DEFAULT].renderer).__name__ == "HIPRenderer":
+    return f"{note}, WMMA=llvm"
+  return f"{note}, WMMA=0"
 
 
 def inspect(dev: str, sizes: list[int], tc: int) -> None:
@@ -108,7 +127,10 @@ def inspect(dev: str, sizes: list[int], tc: int) -> None:
   ren = type(Device[Device.DEFAULT].renderer).__name__
   print(f"\n=== inspect DEV={dev} TC={tc} renderer={ren} ===")
   for n in sizes:
-    prg, uses_tc, wmma, mulacc = _program_stats(n, tc)
+    prg, uses_tc, wmma, mulacc, err = _program_stats(n, tc)
+    if err:
+      print(f"  {n:>5}  COMPILE ERROR: {err}")
+      continue
     opts = prg.src[0].arg.applied_opts
     loc, glob = prg.arg.local_size, prg.arg.global_size
     est = prg.src[0].arg.estimates
@@ -139,9 +161,7 @@ def bench(dev: str, sizes: list[int], warmup: int, iters: int, tc: int) -> None:
     Device["AMD"].synchronize()
     sec = (time.perf_counter() - t0) / iters
     gflops = 2 * n**3 / sec / 1e9
-    _, uses_tc, wmma, _ = _program_stats(n, tc)
-    tc_note = f"autogen TC, WMMA={wmma}" if uses_tc else f"no TC opt, WMMA={wmma}"
-    print(f"  {n:>5}  {gflops:8.0f} GFLOPS  ({sec*1000:.2f} ms/iter)  half→float  [{tc_note}]")
+    print(f"  {n:>5}  {gflops:8.0f} GFLOPS  ({sec*1000:.2f} ms/iter)  half→float  [{_tc_tag(n, tc)}]")
 
 
 def _env(dev: str, tc: int | None = None) -> dict[str, str]:
