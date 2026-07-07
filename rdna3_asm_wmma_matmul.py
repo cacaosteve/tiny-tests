@@ -22,7 +22,10 @@ LDS_A_SIZE = BLOCK_M * LDS_A_ROW  # 4096
 LDS_B_SIZE = BLOCK_K * LDS_B_ROW  # 4096
 LDS_SIZE = LDS_A_SIZE + LDS_B_SIZE  # 8192
 LDS_B_OFF = LDS_A_SIZE
-ACC, DA, DB, FA, FB, ET = 60, 188, 196, 204, 44, 10
+# RDNA3 WMMA operands are 8 VGPRs wide (RDNA4 is 4). With 4 A + 4 B frags that is
+# 32+32 regs; the old RDNA4-derived map collided FB+16/FB+24 onto ACC. Repacked:
+# FA 44-75, FB 76-107, DA 108-115, DB 116-123, ACC 128-255 (top tile ends at 255).
+ACC, DA, DB, FA, FB, ET = 128, 108, 116, 44, 76, 10
 
 def build_kernel(N, arch='gfx1100'):
   assert N % BLOCK_M == 0 and N >= 256
@@ -45,8 +48,10 @@ def build_kernel(N, arch='gfx1100'):
   e(v_and_b32_e32(v[3], 1, v[2])); e(v_lshrrev_b32_e32(v[2], 1, v[2]))
 
   e(v_lshlrev_b32_e32(v[4], 5, v[0]))
-  e(v_and_b32_e32(v[48], 7, v[0])); e(v_lshlrev_b32_e32(v[5], 9, v[48]))
-  e(v_lshrrev_b32_e32(v[48], 3, v[0])); e(v_lshlrev_b32_e32(v[48], 5, v[48]))
+  # B is stored col-major in LDS (transpose): off = LDS_B_OFF + col*32 + k*2, col=(tid%8)*16+j.
+  # v[5] base = LDS_B_OFF + (tid%8)*512 + (tid/8)*2; the 16 cols scatter at stride 32 on store.
+  e(v_and_b32_e32(v[48], 7, v[0])); e(v_lshlrev_b32_e32(v[5], 9, v[48]))   # (tid%8)*512
+  e(v_lshrrev_b32_e32(v[48], 3, v[0])); e(v_lshlrev_b32_e32(v[48], 1, v[48]))  # (tid/8)*2
   e(v_add_nc_u32_e32(v[5], v[5], v[48])); e(v_add_nc_u32_e32(v[5], LDS_B_OFF, v[5]))
 
   e(v_add_nc_u32_e32(v[48], s[11], v[0]))
@@ -70,6 +75,26 @@ def build_kernel(N, arch='gfx1100'):
   e(v_add_nc_u32_e32(v[LLB], v[LLB], v[52]))
   e(v_add_nc_u32_e32(v[LLB], LDS_B_OFF, v[LLB]))
 
+  def store_a_lds():
+    for i in range(2): e(ds_store_b128(addr=v[4], data0=v[DA+i*4:DA+i*4+3], offset0=(i*16)&0xFF, offset1=(i*16)>>8))
+  def store_b_lds():
+    # transpose: the 16 cols this thread holds (packed 2/reg in DB) scatter at col stride 32.
+    for j in range(16):
+      off = j*32; op = ds_store_b16 if j%2==0 else ds_store_b16_d16_hi
+      e(op(addr=v[5], data0=v[DB+j//2], offset0=off&0xFF, offset1=off>>8))
+
+  def load_a(tm):
+    aoff = tm * 16 * LDS_A_ROW
+    b = FA + tm * 8
+    e(ds_load_b128(vdst=v[b:b+3], addr=v[LLA], offset0=aoff&0xFF, offset1=aoff>>8))
+    e(ds_load_b128(vdst=v[b+4:b+7], addr=v[LLA], offset0=(aoff+16)&0xFF, offset1=(aoff+16)>>8))
+
+  def load_b(bi):
+    boff = bi * 512  # col-major: fragment bi = 16 cols at bi*16, contiguous k
+    b = FB + bi * 8
+    e(ds_load_b128(vdst=v[b:b+3], addr=v[LLB], offset0=boff&0xFF, offset1=boff>>8))
+    e(ds_load_b128(vdst=v[b+4:b+7], addr=v[LLB], offset0=(boff+16)&0xFF, offset1=(boff+16)>>8))
+
   for i in range(0, 128, 2):
     e(VOPD(VOPDOp.V_DUAL_MOV_B32, VOPDOp.V_DUAL_MOV_B32, vdstx=v[ACC+i], vdsty=v[ACC+i+1], srcx0=0, srcy0=0))
   e(s_mov_b32(s[16], 0))
@@ -79,22 +104,10 @@ def build_kernel(N, arch='gfx1100'):
     for i in range(2): e(global_load_b128(vdst=v[DB+i*4:DB+i*4+3], addr=v[8], saddr=s[6:7], offset=i*16))
     e(s_waitcnt_vmcnt(simm16=0))
   if not NO_DS:
-    for i in range(2): e(ds_store_b128(addr=v[4], data0=v[DA+i*4:DA+i*4+3], offset0=(i*16)&0xFF, offset1=(i*16)>>8))
-    for i in range(2): e(ds_store_b128(addr=v[5], data0=v[DB+i*4:DB+i*4+3], offset0=(i*16)&0xFF, offset1=(i*16)>>8))
+    store_a_lds(); store_b_lds()
   if not NO_GLOBAL:
     e(v_add_nc_u32_e32(v[6], BLOCK_K*ELEM, v[6]))
     e(v_add_nc_u32_e32(v[8], s[14], v[8]))
-
-  def load_a(tm):
-    aoff = tm * 16 * LDS_A_ROW
-    b = FA + tm * 8
-    e(ds_load_b128(vdst=v[b:b+3], addr=v[LLA], offset0=aoff&0xFF, offset1=aoff>>8))
-    e(ds_load_b128(vdst=v[b+4:b+7], addr=v[LLA], offset0=(aoff+16)&0xFF, offset1=(aoff+16)>>8))
-
-  def load_b(bi, off0, off1):
-    b = FB + bi * 8
-    e(ds_load_b128(vdst=v[b:b+3], addr=v[LLB], offset0=off0, offset1=off1))
-    e(ds_load_b128(vdst=v[b+4:b+7], addr=v[LLB], offset0=off0, offset1=off1+2))
 
   def emit_iter_body(load_set='AB'):
     if not NO_DS:
@@ -109,14 +122,14 @@ def build_kernel(N, arch='gfx1100'):
         e(v_add_nc_u32_e32(v[8], s[14], v[8]))
     if not NO_DS:
       for tm in range(TILES_M): load_a(tm)
-      load_b(0, 0, 0); load_b(1, 0, 4)
+      load_b(0); load_b(1)
       e(s_waitcnt_lgkmcnt(simm16=0))
     if not NO_ALU:
-      if not NO_DS: load_b(2, 0, 8)
+      if not NO_DS: load_b(2)
       for tm in range(TILES_M):
         ac = ACC + (tm*TILES_N+0)*8
         e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB:FB+7], src2=v[ac:ac+7]))
-      if not NO_DS: load_b(3, 0, 12)
+      if not NO_DS: load_b(3)
       for tm in range(TILES_M):
         ac = ACC + (tm*TILES_N+1)*8
         e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB+8:FB+15], src2=v[ac:ac+7]))
@@ -130,8 +143,7 @@ def build_kernel(N, arch='gfx1100'):
         e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB+24:FB+31], src2=v[ac:ac+7]))
     if not NO_GLOBAL and not NO_DS: e(s_waitcnt_vmcnt(simm16=0))
     if not NO_DS:
-      for i in range(2): e(ds_store_b128(addr=v[4], data0=v[DA+i*4:DA+i*4+3], offset0=(i*16)&0xFF, offset1=(i*16)>>8))
-      for i in range(2): e(ds_store_b128(addr=v[5], data0=v[DB+i*4:DB+i*4+3], offset0=(i*16)&0xFF, offset1=(i*16)>>8))
+      store_a_lds(); store_b_lds()
     e(s_add_i32(s[16], s[16], BLOCK_K))
 
   label('LOOP')
@@ -146,14 +158,14 @@ def build_kernel(N, arch='gfx1100'):
     e(s_barrier())
   if not NO_DS:
     for tm in range(TILES_M): load_a(tm)
-    load_b(0, 0, 0); load_b(1, 0, 4)
+    load_b(0); load_b(1)
     e(s_waitcnt_lgkmcnt(simm16=0))
   if not NO_ALU:
-    if not NO_DS: load_b(2, 0, 8)
+    if not NO_DS: load_b(2)
     for tm in range(TILES_M):
       ac = ACC + (tm*TILES_N+0)*8
       e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB:FB+7], src2=v[ac:ac+7]))
-    if not NO_DS: load_b(3, 0, 12)
+    if not NO_DS: load_b(3)
     for tm in range(TILES_M):
       ac = ACC + (tm*TILES_N+1)*8
       e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB+8:FB+15], src2=v[ac:ac+7]))
