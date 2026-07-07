@@ -181,10 +181,9 @@ def build_kernel(N, arch='gfx1100'):
       e(v_mul_lo_u32(v[ET+4], v[ET+6], s[12])); e(v_add_nc_u32_e32(v[ET+4], v[ET+4], v[ET+3]))
       if c_off: e(v_add_nc_u32_e32(v[ET+4], c_off, v[ET+4]))
       e(v_lshlrev_b32_e32(v[ET+4], 1, v[ET+4]))
-      e(v_mov_b32_e32(v[ET+5], 0))  # RDNA3 global addr is 64-bit (see global_load v[7]=0)
       for elem in range(8):
         e(v_cvt_f16_f32_e32(v[ET+7], v[ac+elem]))
-        e(global_store_b16(addr=v[ET+4:ET+5], data=v[ET+7], saddr=s[8:9]))
+        e(global_store_b16(addr=v[ET+4], data=v[ET+7], saddr=s[8:9]))
         if elem < 7:
           e(v_add_nc_u32_e32(v[ET+4], s[13], v[ET+4]))
           e(v_add_nc_u32_e32(v[ET+4], s[13], v[ET+4]))  # WMMA acc elems are 2 rows apart
