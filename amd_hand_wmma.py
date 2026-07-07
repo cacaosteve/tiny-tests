@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Safe progressive test for gfx1100 hand-tuned WMMA GEMM.
 
-Wraps extra/gemm/rdna3_asm_wmma_matmul.py with compile-first checks and per-step
+Wraps rdna3_asm_wmma_matmul.py (this repo) with compile-first checks and per-step
 subprocess timeouts. If the 7900 drives the display, a GPU hang can still drop
 Parsec/RDP — wait 2–3 min, reconnect (SSH is more reliable than web UI), then:
 
@@ -24,7 +24,7 @@ from datetime import datetime
 TINYGRAD = os.environ.get("TINYGRAD", os.path.expanduser("~/tinygrad"))
 HERE = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
-KERNEL = os.path.join(TINYGRAD, "extra/gemm/rdna3_asm_wmma_matmul.py")
+KERNEL = os.path.join(HERE, "rdna3_asm_wmma_matmul.py")
 LOG_PATH = os.path.join(HERE, "amd_hand_wmma.last.log")
 DEV_ASM = "AMD:AMD"
 TIMEOUT_RC = 124
@@ -118,7 +118,7 @@ def main() -> int:
   args = p.parse_args()
 
   root = args.tinygrad
-  kernel = os.path.join(root, "extra/gemm/rdna3_asm_wmma_matmul.py")
+  kernel = os.path.join(HERE, "rdna3_asm_wmma_matmul.py")
 
   steps = list(STEPS)
   if args.bench:
