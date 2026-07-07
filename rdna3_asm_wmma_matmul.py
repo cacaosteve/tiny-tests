@@ -247,14 +247,18 @@ def run_matmul(n: int | None = None):
     zero_cnt = int((c_np == 0).sum())
     print(f"relative RMSE {err:.6f}  (c nan={nan_cnt}/{c_np.size} zero={zero_cnt} sample={c_np[0,0]:.4g})")
     if getenv("DEBUG_VERIFY", 0):
-      bs = BLOCK_M
-      for gy in range(n // bs):
-        for gx in range(n // bs):
-          sl, r = c_np[gy*bs:(gy+1)*bs, gx*bs:(gx+1)*bs], ref[gy*bs:(gy+1)*bs, gx*bs:(gx+1)*bs]
-          m = ~np.isnan(sl)
-          brmse = float(np.sqrt(np.mean((sl[m]-r[m])**2))) if m.any() else float("nan")
-          print(f"  tile wg=({gx},{gy}) nan={int(np.isnan(sl).sum())}/{sl.size} valid_rmse={brmse:.4g} valid={m.sum()}")
-      print(f"  nan col parity even={np.isnan(c_np[:,0::2]).mean():.3f} odd={np.isnan(c_np[:,1::2]).mean():.3f}")
+      bad = np.isnan(c_np) | (np.abs(c_np - ref) > 0.1 * np.abs(ref))  # grossly-wrong cells (incl NaN)
+      print(f"  bad cells {int(bad.sum())}/{c_np.size} ({bad.mean()*100:.3f}%)")
+      rows, cols = np.where(bad)
+      if len(rows):
+        # localize: is it a specific output-row parity / position within the 16x16 WMMA tile?
+        print(f"  bad row%2: even={int((rows%2==0).sum())} odd={int((rows%2==1).sum())}")
+        print(f"  bad col%2: even={int((cols%2==0).sum())} odd={int((cols%2==1).sum())}")
+        print(f"  bad row%16 hist: {np.bincount(rows%16, minlength=16).tolist()}")
+        print(f"  bad col%16 hist: {np.bincount(cols%16, minlength=16).tolist()}")
+        wgy, wgx = np.bincount(rows//BLOCK_M, minlength=n//BLOCK_M), np.bincount(cols//BLOCK_N, minlength=n//BLOCK_N)
+        print(f"  bad per wg-row: {wgy.tolist()}")
+        print(f"  bad per wg-col: {wgx.tolist()}")
     if err != err or err > 0.05: raise RuntimeError(f"matmul is wrong! RMSE={err}")
 
 if __name__ == "__main__":
