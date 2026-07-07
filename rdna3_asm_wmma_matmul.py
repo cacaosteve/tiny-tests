@@ -44,21 +44,22 @@ def build_kernel(N, arch='gfx1100'):
   e(v_and_b32_e32(v[1], 31, v[0])); e(v_lshrrev_b32_e32(v[2], 5, v[0]))
   e(v_and_b32_e32(v[3], 1, v[2])); e(v_lshrrev_b32_e32(v[2], 1, v[2]))
 
-  # A LDS store: swizzled layout must match load_a (LLA) read addresses
-  e(v_and_b32_e32(v[48], 63, v[0]))
-  e(v_lshrrev_b32_e32(v[49], 4, v[48]))
-  e(v_lshlrev_b32_e32(v[4], 9, v[49]))
-  e(v_and_b32_e32(v[49], 15, v[1]))
-  e(v_lshlrev_b32_e32(v[49], 5, v[49]))
-  e(v_add_nc_u32_e32(v[4], v[4], v[49]))
-  e(v_lshrrev_b32_e32(v[49], 4, v[1]))
-  e(v_lshlrev_b32_e32(v[49], 4, v[49]))
-  e(v_add_nc_u32_e32(v[4], v[4], v[49]))
-  e(v_lshlrev_b32_e32(v[49], 11, v[2]))
-  e(v_add_nc_u32_e32(v[4], v[4], v[49]))
-  e(v_and_b32_e32(v[48], 7, v[0])); e(v_lshlrev_b32_e32(v[5], 9, v[48]))
-  e(v_lshrrev_b32_e32(v[48], 3, v[0])); e(v_lshlrev_b32_e32(v[48], 5, v[48]))
-  e(v_add_nc_u32_e32(v[5], v[5], v[48])); e(v_add_nc_u32_e32(v[5], LDS_B_OFF, v[5]))
+  e(v_lshlrev_b32_e32(v[4], 5, v[0]))
+  # B LDS store: transposed layout per 64-col panel (matches LLB v[3]<<11 read)
+  e(v_lshrrev_b32_e32(v[49], 3, v[0]))
+  e(v_lshlrev_b32_e32(v[49], 3, v[49]))
+  e(v_and_b32_e32(v[48], 7, v[0]))
+  e(v_add_nc_u32_e32(v[49], v[49], v[48]))   # col = (tid>>3)*8 + (tid&7)
+  e(v_and_b32_e32(v[48], 63, v[49]))          # c_local = col % 64
+  e(v_and_b32_e32(v[5], 7, v[48]))
+  e(v_lshlrev_b32_e32(v[5], 9, v[5]))         # (c_local%8)*512
+  e(v_lshrrev_b32_e32(v[48], 3, v[48]))
+  e(v_lshlrev_b32_e32(v[48], 5, v[48]))       # (c_local/8)*32
+  e(v_add_nc_u32_e32(v[5], v[5], v[48]))
+  e(v_lshrrev_b32_e32(v[48], 6, v[49]))       # col>>6
+  e(v_lshlrev_b32_e32(v[48], 11, v[48]))      # panel * 2048
+  e(v_add_nc_u32_e32(v[5], v[5], v[48]))
+  e(v_add_nc_u32_e32(v[5], LDS_B_OFF, v[5]))
 
   e(v_add_nc_u32_e32(v[48], s[11], v[0]))
   e(v_mul_lo_u32(v[6], v[48], N*ELEM)); e(v_mov_b32_e32(v[7], 0))
