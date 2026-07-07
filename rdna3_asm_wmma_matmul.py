@@ -109,14 +109,14 @@ def build_kernel(N, arch='gfx1100'):
         e(v_add_nc_u32_e32(v[8], s[14], v[8]))
     if not NO_DS:
       for tm in range(TILES_M): load_a(tm)
-      load_b(0, 0, 0); load_b(1, 0, 0)
+      load_b(0, 0, 0); load_b(1, 0, 4)
       e(s_waitcnt_lgkmcnt(simm16=0))
     if not NO_ALU:
-      if not NO_DS: load_b(2, 0, 4)
+      if not NO_DS: load_b(2, 0, 8)
       for tm in range(TILES_M):
         ac = ACC + (tm*TILES_N+0)*8
         e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB:FB+7], src2=v[ac:ac+7]))
-      if not NO_DS: load_b(3, 0, 6)
+      if not NO_DS: load_b(3, 0, 12)
       for tm in range(TILES_M):
         ac = ACC + (tm*TILES_N+1)*8
         e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB+8:FB+15], src2=v[ac:ac+7]))
@@ -146,14 +146,14 @@ def build_kernel(N, arch='gfx1100'):
     e(s_barrier())
   if not NO_DS:
     for tm in range(TILES_M): load_a(tm)
-    load_b(0, 0, 0); load_b(1, 0, 0)
+    load_b(0, 0, 0); load_b(1, 0, 4)
     e(s_waitcnt_lgkmcnt(simm16=0))
   if not NO_ALU:
-    if not NO_DS: load_b(2, 0, 4)
+    if not NO_DS: load_b(2, 0, 8)
     for tm in range(TILES_M):
       ac = ACC + (tm*TILES_N+0)*8
       e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB:FB+7], src2=v[ac:ac+7]))
-    if not NO_DS: load_b(3, 0, 6)
+    if not NO_DS: load_b(3, 0, 12)
     for tm in range(TILES_M):
       ac = ACC + (tm*TILES_N+1)*8
       e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB+8:FB+15], src2=v[ac:ac+7]))
