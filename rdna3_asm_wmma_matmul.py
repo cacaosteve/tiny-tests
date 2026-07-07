@@ -62,15 +62,15 @@ def build_kernel(N, arch='gfx1100'):
   e(s_mul_i32(s[15], s[10], ELEM)); e(v_add_nc_u32_e32(v[8], s[15], v[8]))
   e(v_mov_b32_e32(v[9], 0))
 
+  # RDNA3 WMMA needs the A/B fragment REPLICATED in lanes 0-15 and 16-31 (elements_per_thread=16
+  # -> 2 copies of the 16x16 tile). So the read addr uses only lane%16; lanes 16-31 read the same
+  # LDS as 0-15. Adding a (lane//16)*16 term (RDNA4 layout) fed non-replica data -> undefined odd rows.
   LLA, LLB = 40, 43
-  e(v_and_b32_e32(v[50], 15, v[1])); e(v_lshrrev_b32_e32(v[51], 4, v[1]))
+  e(v_and_b32_e32(v[50], 15, v[1]))
   e(v_lshlrev_b32_e32(v[LLA], 5, v[50]))
-  e(v_lshlrev_b32_e32(v[51], 4, v[51]))
-  e(v_add_nc_u32_e32(v[LLA], v[LLA], v[51]))
   e(v_lshlrev_b32_e32(v[52], 11, v[2]))
   e(v_add_nc_u32_e32(v[LLA], v[LLA], v[52]))
   e(v_lshlrev_b32_e32(v[LLB], 5, v[50]))
-  e(v_add_nc_u32_e32(v[LLB], v[LLB], v[51]))
   e(v_lshlrev_b32_e32(v[52], 11, v[3]))
   e(v_add_nc_u32_e32(v[LLB], v[LLB], v[52]))
   e(v_add_nc_u32_e32(v[LLB], LDS_B_OFF, v[LLB]))
