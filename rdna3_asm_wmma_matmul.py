@@ -143,12 +143,16 @@ def build_kernel(N, arch='gfx1100'):
         e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB+24:FB+31], src2=v[ac:ac+7]))
     if not NO_GLOBAL and not NO_DS: e(s_waitcnt_vmcnt(simm16=0))
     if not NO_DS:
+      # single-buffered LDS: barrier so every wave finished reading (WMMAs) this block
+      # before any wave overwrites LDS with the next block. Without this, waves race and
+      # a fast wave clobbers LDS a slow wave is still reading -> nondeterministic NaN/inf.
+      e(s_waitcnt_lgkmcnt(simm16=0)); e(s_barrier())
       store_a_lds(); store_b_lds()
     e(s_add_i32(s[16], s[16], BLOCK_K))
 
   label('LOOP')
-  emit_iter_body(load_set='A')
-  emit_iter_body(load_set='B')
+  emit_iter_body(load_set='AB')
+  emit_iter_body(load_set='AB')
   e(s_cmp_lt_i32(s[16], s[17])); e(s_cbranch_scc1(simm16=0)); br(I[-1], 'LOOP')
 
   emit_iter_body(load_set='AB')
