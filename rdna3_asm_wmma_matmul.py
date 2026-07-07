@@ -109,6 +109,20 @@ def build_kernel(N, arch='gfx1100'):
     e(v_add_nc_u32_e32(v[6], BLOCK_K*ELEM, v[6]))
     e(v_add_nc_u32_e32(v[8], s[14], v[8]))
 
+  def compute_block():
+    # RDNA3: issue all LDS reads, wait once, then all WMMAs. The RDNA4-style interleaved
+    # load_b(2/3) with partial s_waitcnt_lgkmcnt(1) made "load finished before WMMA reads it"
+    # timing-dependent on hardware -> nondeterministic NaN. One wait(0) is correct and simpler.
+    if not NO_DS:
+      for tm in range(TILES_M): load_a(tm)
+      for bi in range(TILES_N): load_b(bi)
+      e(s_waitcnt_lgkmcnt(simm16=0))
+    if not NO_ALU:
+      for tn in range(TILES_N):
+        for tm in range(TILES_M):
+          ac = ACC + (tm*TILES_N+tn)*8
+          e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB+tn*8:FB+tn*8+7], src2=v[ac:ac+7]))
+
   def emit_iter_body(load_set='AB'):
     if not NO_DS:
       e(s_waitcnt_lgkmcnt(simm16=0))
@@ -120,27 +134,7 @@ def build_kernel(N, arch='gfx1100'):
       if 'B' in load_set:
         for i in range(2): e(global_load_b128(vdst=v[DB+i*4:DB+i*4+3], addr=v[8], saddr=s[6:7], offset=i*16))
         e(v_add_nc_u32_e32(v[8], s[14], v[8]))
-    if not NO_DS:
-      for tm in range(TILES_M): load_a(tm)
-      load_b(0); load_b(1)
-      e(s_waitcnt_lgkmcnt(simm16=0))
-    if not NO_ALU:
-      if not NO_DS: load_b(2)
-      for tm in range(TILES_M):
-        ac = ACC + (tm*TILES_N+0)*8
-        e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB:FB+7], src2=v[ac:ac+7]))
-      if not NO_DS: load_b(3)
-      for tm in range(TILES_M):
-        ac = ACC + (tm*TILES_N+1)*8
-        e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB+8:FB+15], src2=v[ac:ac+7]))
-      if not NO_DS: e(s_waitcnt_lgkmcnt(simm16=1))
-      for tm in range(TILES_M):
-        ac = ACC + (tm*TILES_N+2)*8
-        e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB+16:FB+23], src2=v[ac:ac+7]))
-      if not NO_DS: e(s_waitcnt_lgkmcnt(simm16=0))
-      for tm in range(TILES_M):
-        ac = ACC + (tm*TILES_N+3)*8
-        e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB+24:FB+31], src2=v[ac:ac+7]))
+    compute_block()
     if not NO_GLOBAL and not NO_DS: e(s_waitcnt_vmcnt(simm16=0))
     if not NO_DS:
       # single-buffered LDS: barrier so every wave finished reading (WMMAs) this block
@@ -160,27 +154,7 @@ def build_kernel(N, arch='gfx1100'):
   if not NO_DS:
     e(s_waitcnt_lgkmcnt(simm16=0))
     e(s_barrier())
-  if not NO_DS:
-    for tm in range(TILES_M): load_a(tm)
-    load_b(0); load_b(1)
-    e(s_waitcnt_lgkmcnt(simm16=0))
-  if not NO_ALU:
-    if not NO_DS: load_b(2)
-    for tm in range(TILES_M):
-      ac = ACC + (tm*TILES_N+0)*8
-      e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB:FB+7], src2=v[ac:ac+7]))
-    if not NO_DS: load_b(3)
-    for tm in range(TILES_M):
-      ac = ACC + (tm*TILES_N+1)*8
-      e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB+8:FB+15], src2=v[ac:ac+7]))
-    if not NO_DS: e(s_waitcnt_lgkmcnt(simm16=1))
-    for tm in range(TILES_M):
-      ac = ACC + (tm*TILES_N+2)*8
-      e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB+16:FB+23], src2=v[ac:ac+7]))
-    if not NO_DS: e(s_waitcnt_lgkmcnt(simm16=0))
-    for tm in range(TILES_M):
-      ac = ACC + (tm*TILES_N+3)*8
-      e(v_wmma_f32_16x16x16_f16(vdst=v[ac:ac+7], src0=v[FA+tm*8:FA+tm*8+7], src1=v[FB+24:FB+31], src2=v[ac:ac+7]))
+  compute_block()
 
   label('EPILOGUE')
   e(v_and_b32_e32(v[ET], 15, v[1]))
