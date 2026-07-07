@@ -211,7 +211,7 @@ def run_matmul(n: int | None = None):
   rng = np.random.default_rng(42)
   a = Tensor(rng.random((n, n), dtype=np.float32).astype(np.float16))
   b = Tensor(rng.random((n, n), dtype=np.float32).astype(np.float16))
-  c = Tensor.empty(n, n, dtype=dtypes.half)
+  c = Tensor.zeros(n, n, dtype=dtypes.half)
   Tensor.realize(a, b, c)
 
   grid, local = (n//BLOCK_N, n//BLOCK_M, 1), (THREADS, 1, 1)
@@ -245,11 +245,14 @@ def run_matmul(n: int | None = None):
 
   if getenv("VERIFY", 1):
     GlobalCounters.reset()
+    dev.synchronize()
     c_np = c.float().numpy()
     a_np, b_np = a.float().numpy(), b.float().numpy()
     ref = a_np @ b_np
     err = np.sqrt(np.mean((c_np - ref)**2)) / np.sqrt(np.mean(ref**2))
-    print(f"relative RMSE {err:.6f}")
+    nan_cnt = int(np.isnan(c_np).sum())
+    zero_cnt = int((c_np == 0).sum())
+    print(f"relative RMSE {err:.6f}  (c nan={nan_cnt}/{c_np.size} zero={zero_cnt} sample={c_np[0,0]:.4g})")
     if err != err or err > 0.05: raise RuntimeError(f"matmul is wrong! RMSE={err}")
 
 if __name__ == "__main__":
