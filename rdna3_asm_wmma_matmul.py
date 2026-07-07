@@ -75,8 +75,8 @@ def build_kernel(N, arch='gfx1100'):
   e(s_mov_b32(s[16], 0))
 
   if not NO_GLOBAL:
-    for i in range(2): e(global_load_b128(vdst=v[DA+i*4:DA+i*4+3], addr=v[6], saddr=s[4:5], offset=i*16))
-    for i in range(2): e(global_load_b128(vdst=v[DB+i*4:DB+i*4+3], addr=v[8], saddr=s[6:7], offset=i*16))
+    for i in range(2): e(global_load_b128(vdst=v[DA+i*4:DA+i*4+3], addr=v[6:7], saddr=s[4:5], offset=i*16))
+    for i in range(2): e(global_load_b128(vdst=v[DB+i*4:DB+i*4+3], addr=v[8:9], saddr=s[6:7], offset=i*16))
     e(s_waitcnt_vmcnt(simm16=0))
   if not NO_DS:
     for i in range(2): e(ds_store_b128(addr=v[4], data0=v[DA+i*4:DA+i*4+3], offset0=(i*16)&0xFF, offset1=(i*16)>>8))
@@ -102,10 +102,10 @@ def build_kernel(N, arch='gfx1100'):
       e(s_barrier())
     if not NO_GLOBAL:
       if 'A' in load_set:
-        for i in range(2): e(global_load_b128(vdst=v[DA+i*4:DA+i*4+3], addr=v[6], saddr=s[4:5], offset=i*16))
+        for i in range(2): e(global_load_b128(vdst=v[DA+i*4:DA+i*4+3], addr=v[6:7], saddr=s[4:5], offset=i*16))
         e(v_add_nc_u32_e32(v[6], BLOCK_K*ELEM, v[6]))
       if 'B' in load_set:
-        for i in range(2): e(global_load_b128(vdst=v[DB+i*4:DB+i*4+3], addr=v[8], saddr=s[6:7], offset=i*16))
+        for i in range(2): e(global_load_b128(vdst=v[DB+i*4:DB+i*4+3], addr=v[8:9], saddr=s[6:7], offset=i*16))
         e(v_add_nc_u32_e32(v[8], s[14], v[8]))
     if not NO_DS:
       for tm in range(TILES_M): load_a(tm)
@@ -182,7 +182,7 @@ def build_kernel(N, arch='gfx1100'):
       e(v_lshlrev_b32_e32(v[ET+4], 1, v[ET+4]))
       for elem in range(8):
         e(v_cvt_f16_f32_e32(v[ET+7], v[ac+elem]))
-        e(global_store_b16(addr=v[ET+4], data=v[ET+7], saddr=s[8:9]))
+        e(global_store_b16(addr=v[ET+4:ET+5], data=v[ET+7], saddr=s[8:9]))
         if elem < 7: e(v_add_nc_u32_e32(v[ET+4], s[13], v[ET+4]))
 
   e(s_waitcnt_vscnt(simm16=0)); e(s_sendmsg(simm16=3)); e(s_endpgm())
@@ -249,7 +249,8 @@ def run_matmul(n: int | None = None):
     a_np, b_np = a.float().numpy(), b.float().numpy()
     ref = a_np @ b_np
     err = np.sqrt(np.mean((c_np - ref)**2)) / np.sqrt(np.mean(ref**2))
-    print(f"relative RMSE {err:.6f}")
+    nan_cnt = int(np.isnan(c_np).sum())
+    print(f"relative RMSE {err:.6f}  (c nan={nan_cnt}/{c_np.size}, c[0,0]={c_np[0,0]})")
     if err != err or err > 0.05: raise RuntimeError(f"matmul is wrong! RMSE={err}")
 
 if __name__ == "__main__":
