@@ -115,10 +115,25 @@ def main() -> int:
   p.add_argument("--bench", action="store_true", help="append full 4096²×5 bench after safe steps")
   p.add_argument("--compile-only", action="store_true", help="only run compile-* steps (no GPU)")
   p.add_argument("--list", action="store_true", help="list step names and exit")
+  p.add_argument("--diagnose", action="store_true", help="run DEBUG_VERIFY bad-cell localization --runs times")
+  p.add_argument("--n", type=int, default=256, help="matrix size for --diagnose (default 256)")
+  p.add_argument("--runs", type=int, default=2, help="repeat count for --diagnose (default 2, to catch races)")
   args = p.parse_args()
 
   root = args.tinygrad
   kernel = os.path.join(HERE, "rdna3_asm_wmma_matmul.py")
+
+  if args.diagnose:
+    if err := _check_paths(root, kernel):
+      print(f"error: {err}", file=sys.stderr)
+      return 2
+    step = Step(f"diagnose-{args.n}", True, 120,
+                {"N": str(args.n), "CNT": "1", "VERIFY": "1", "DEBUG_VERIFY": "1", "HCQDEV_WAIT_TIMEOUT_MS": "30000"})
+    with open(LOG_PATH, "a", encoding="utf-8") as log_fp:
+      for i in range(args.runs):
+        _log(f"--- diagnose run {i+1}/{args.runs} (N={args.n}) ---", log_fp)
+        _run_step(step, root, kernel, log_fp)  # continue through failures so we see every run
+    return 0
 
   steps = list(STEPS)
   if args.bench:
