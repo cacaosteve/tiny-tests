@@ -10,7 +10,7 @@ from tinygrad.uop.ops import UOp, Ops, KernelInfo
 from tinygrad.helpers import getenv, colored
 from tinygrad.dtype import dtypes, AddrSpace
 from tinygrad.engine.realize import Estimates, run_linear
-from tinygrad.renderer.amd.dsl import s, v, VCC_LO, NULL, ttmp
+from tinygrad.renderer.amd.dsl import s, v, VCC_LO, NULL
 from tinygrad.runtime.autogen.amd.rdna3.ins import *
 
 BLOCK_M, BLOCK_N, BLOCK_K = 128, 128, 16
@@ -35,8 +35,8 @@ def build_kernel(N, arch='gfx1100'):
   e(s_load_b128(sdata=s[4:7], sbase=s[0:1], offset=0, soffset=NULL))
   e(s_load_b64(sdata=s[8:9], sbase=s[0:1], offset=0x10, soffset=NULL))
   e(s_waitcnt_lgkmcnt(simm16=0))
-  e(s_mov_b32(s[10], ttmp[9])); e(s_and_b32(s[11], ttmp[7], 0xFFFF))
-  e(s_lshl_b32(s[10], s[10], 7)); e(s_lshl_b32(s[11], s[11], 7))
+  # RDNA3: wg ids in s[2:4] (see amd_lib WGID). RDNA4 uses ttmp[9]/ttmp[7] instead.
+  e(s_lshl_b32(s[10], s[2], 7)); e(s_lshl_b32(s[11], s[3], 7))
   e(s_mov_b32(s[12], N)); e(s_lshl_b32(s[13], s[12], 1))
   e(s_mul_i32(s[14], s[12], BLOCK_K*ELEM))
   e(s_add_i32(s[17], s[12], -2*BLOCK_K))  # loop bound
