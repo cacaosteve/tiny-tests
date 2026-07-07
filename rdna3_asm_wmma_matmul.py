@@ -3,6 +3,7 @@
 #   DEV=AMD:AMD python ~/github/tiny-tests/rdna3_asm_wmma_matmul.py
 #   VERIFY=1 CNT=10 DEV=AMD:AMD python ~/github/tiny-tests/rdna3_asm_wmma_matmul.py
 # Or use the safe harness: python ~/github/tiny-tests/amd_hand_wmma.py
+import time
 import numpy as np
 from tinygrad import Tensor, Device, Context, GlobalCounters
 from tinygrad.uop.ops import UOp, Ops, KernelInfo
@@ -228,13 +229,19 @@ def run_matmul(n: int | None = None):
   c = Tensor.custom_kernel(a, b, c, fxn=asm_kernel)[2]
   linear = c.schedule_linear()
 
+  dev = Device[Device.DEFAULT]
   ets = []
   with Context(DEBUG=int(getenv("DEBUG", 0))):
     for _ in range(int(getenv("CNT", 5))):
-      start = GlobalCounters.time_sum_s
+      t0 = time.perf_counter()
       run_linear(linear)
-      ets.append(GlobalCounters.time_sum_s - start)
-  print(f"REAL TFLOPS {n*n*n*2 / min(ets) * 1e-12:.2f}")
+      dev.synchronize()
+      ets.append(time.perf_counter() - t0)
+  best = min(ets)
+  if best > 0:
+    print(f"REAL TFLOPS {n*n*n*2 / best * 1e-12:.2f}  ({best*1000:.2f} ms best of {len(ets)})")
+  else:
+    print(f"timing unavailable (ets={ets})")
 
   if getenv("VERIFY", 1):
     GlobalCounters.reset()
