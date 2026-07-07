@@ -37,7 +37,7 @@ def build_kernel(N, arch='gfx1100'):
 
   e(s_load_b128(sdata=s[4:7], sbase=s[0:1], offset=0, soffset=NULL))
   e(s_load_b64(sdata=s[8:9], sbase=s[0:1], offset=0x10, soffset=NULL))
-  e(s_waitcnt_lgkmcnt(simm16=0))
+  e(s_waitcnt_lgkmcnt(sdst=NULL, simm16=0))
   # RDNA3: wg ids in s[2:4] (see amd_lib WGID). RDNA4 uses ttmp[9]/ttmp[7] instead.
   e(s_lshl_b32(s[10], s[2], 7)); e(s_lshl_b32(s[11], s[3], 7))
   e(s_mov_b32(s[12], N)); e(s_lshl_b32(s[13], s[12], 1))
@@ -102,7 +102,7 @@ def build_kernel(N, arch='gfx1100'):
   if not NO_GLOBAL:
     for i in range(2): e(global_load_b128(vdst=v[DA+i*4:DA+i*4+3], addr=v[6], saddr=s[4:5], offset=i*16))
     for i in range(2): e(global_load_b128(vdst=v[DB+i*4:DB+i*4+3], addr=v[8], saddr=s[6:7], offset=i*16))
-    e(s_waitcnt_vmcnt(simm16=0))
+    e(s_waitcnt_vmcnt(sdst=NULL, simm16=0))
   if not NO_DS:
     store_a_lds(); store_b_lds()
   if not NO_GLOBAL:
@@ -116,7 +116,7 @@ def build_kernel(N, arch='gfx1100'):
     if not NO_DS:
       for tm in range(TILES_M): load_a(tm)
       for bi in range(TILES_N): load_b(bi)
-      e(s_waitcnt_lgkmcnt(simm16=0))
+      e(s_waitcnt_lgkmcnt(sdst=NULL, simm16=0))
     if not NO_ALU:
       for tn in range(TILES_N):
         for tm in range(TILES_M):
@@ -125,7 +125,7 @@ def build_kernel(N, arch='gfx1100'):
 
   def emit_iter_body(load_set='AB'):
     if not NO_DS:
-      e(s_waitcnt_lgkmcnt(simm16=0))
+      e(s_waitcnt_lgkmcnt(sdst=NULL, simm16=0))
       e(s_barrier())
     if not NO_GLOBAL:
       if 'A' in load_set:
@@ -135,12 +135,12 @@ def build_kernel(N, arch='gfx1100'):
         for i in range(2): e(global_load_b128(vdst=v[DB+i*4:DB+i*4+3], addr=v[8], saddr=s[6:7], offset=i*16))
         e(v_add_nc_u32_e32(v[8], s[14], v[8]))
     compute_block()
-    if not NO_GLOBAL and not NO_DS: e(s_waitcnt_vmcnt(simm16=0))
+    if not NO_GLOBAL and not NO_DS: e(s_waitcnt_vmcnt(sdst=NULL, simm16=0))
     if not NO_DS:
       # single-buffered LDS: barrier so every wave finished reading (WMMAs) this block
       # before any wave overwrites LDS with the next block. Without this, waves race and
       # a fast wave clobbers LDS a slow wave is still reading -> nondeterministic NaN/inf.
-      e(s_waitcnt_lgkmcnt(simm16=0)); e(s_barrier())
+      e(s_waitcnt_lgkmcnt(sdst=NULL, simm16=0)); e(s_barrier())
       store_a_lds(); store_b_lds()
     e(s_add_i32(s[16], s[16], BLOCK_K))
 
@@ -152,7 +152,7 @@ def build_kernel(N, arch='gfx1100'):
   emit_iter_body(load_set='AB')
 
   if not NO_DS:
-    e(s_waitcnt_lgkmcnt(simm16=0))
+    e(s_waitcnt_lgkmcnt(sdst=NULL, simm16=0))
     e(s_barrier())
   compute_block()
 
@@ -178,7 +178,7 @@ def build_kernel(N, arch='gfx1100'):
           e(v_add_nc_u32_e32(v[ET+4], s[13], v[ET+4]))
           e(v_add_nc_u32_e32(v[ET+4], s[13], v[ET+4]))  # WMMA acc elems are 2 rows apart
 
-  e(s_waitcnt_vscnt(simm16=0)); e(s_sendmsg(simm16=3)); e(s_endpgm())
+  e(s_waitcnt_vscnt(sdst=NULL, simm16=0)); e(s_sendmsg(simm16=3)); e(s_endpgm())
 
   for idx, target in B:
     off = (L[target] - sum(i.size() for i in I[:idx+1])) // 4
