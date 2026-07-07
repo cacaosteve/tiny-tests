@@ -168,10 +168,11 @@ def build_kernel(N, arch='gfx1100'):
 
   label('EPILOGUE')
   e(v_and_b32_e32(v[ET], 15, v[1]))
-  e(v_lshrrev_b32_e32(v[ET+1], 4, v[1])); e(v_lshlrev_b32_e32(v[ET+1], 3, v[ET+1]))
+  # RDNA3 WMMA: lanes 0-15 -> even rows, 16-31 -> odd rows (not RDNA4's +8 row band).
+  e(v_lshrrev_b32_e32(v[ET+1], 4, v[1]))
   e(v_lshlrev_b32_e32(v[ET+2], 6, v[2])); e(v_add_nc_u32_e32(v[ET+2], s[11], v[ET+2]))
   e(v_lshlrev_b32_e32(v[ET+3], 6, v[3])); e(v_add_nc_u32_e32(v[ET+3], s[10], v[ET+3]))
-  e(v_add_nc_u32_e32(v[ET+3], v[ET+3], v[ET])); e(v_mov_b32_e32(v[ET+5], 0))
+  e(v_add_nc_u32_e32(v[ET+3], v[ET+3], v[ET]))
 
   for tm in range(TILES_M):
     for tn in range(TILES_N):
@@ -183,7 +184,9 @@ def build_kernel(N, arch='gfx1100'):
       for elem in range(8):
         e(v_cvt_f16_f32_e32(v[ET+7], v[ac+elem]))
         e(global_store_b16(addr=v[ET+4], data=v[ET+7], saddr=s[8:9]))
-        if elem < 7: e(v_add_nc_u32_e32(v[ET+4], s[13], v[ET+4]))
+        if elem < 7:
+          e(v_add_nc_u32_e32(v[ET+4], s[13], v[ET+4]))
+          e(v_add_nc_u32_e32(v[ET+4], s[13], v[ET+4]))  # WMMA acc elems are 2 rows apart
 
   e(s_waitcnt_vscnt(simm16=0)); e(s_sendmsg(simm16=3)); e(s_endpgm())
 
@@ -253,6 +256,15 @@ def run_matmul(n: int | None = None):
     nan_cnt = int(np.isnan(c_np).sum())
     zero_cnt = int((c_np == 0).sum())
     print(f"relative RMSE {err:.6f}  (c nan={nan_cnt}/{c_np.size} zero={zero_cnt} sample={c_np[0,0]:.4g})")
+    if getenv("DEBUG_VERIFY", 0):
+      bs = BLOCK_M
+      for gy in range(n // bs):
+        for gx in range(n // bs):
+          sl, r = c_np[gy*bs:(gy+1)*bs, gx*bs:(gx+1)*bs], ref[gy*bs:(gy+1)*bs, gx*bs:(gx+1)*bs]
+          m = ~np.isnan(sl)
+          brmse = float(np.sqrt(np.mean((sl[m]-r[m])**2))) if m.any() else float("nan")
+          print(f"  tile wg=({gx},{gy}) nan={int(np.isnan(sl).sum())}/{sl.size} valid_rmse={brmse:.4g} valid={m.sum()}")
+      print(f"  nan col parity even={np.isnan(c_np[:,0::2]).mean():.3f} odd={np.isnan(c_np[:,1::2]).mean():.3f}")
     if err != err or err > 0.05: raise RuntimeError(f"matmul is wrong! RMSE={err}")
 
 if __name__ == "__main__":
