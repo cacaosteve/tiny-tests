@@ -134,9 +134,12 @@ def inspect(dev: str, sizes: list[int], tc: int) -> None:
     opts = prg.src[0].arg.applied_opts
     loc, glob = prg.arg.local_size, prg.arg.global_size
     est = prg.src[0].arg.estimates
-    asm = prg.src[2].arg if len(prg.src) > 2 else ""
-    wmma_asm = asm.upper().count("V_WMMA_F32_16X16X16_F16") if isinstance(asm, str) else 0
-    print(f"  {n:>5}  TC={uses_tc}  WMMA_ins={wmma}  MULACC={mulacc}  asm_wmma={wmma_asm}")
+    from tinygrad.renderer.isa.amd import AMDOps
+    from tinygrad.uop.ops import Ops
+    lin = list(prg.src[1].src)
+    spill = sum(1 for u in lin if u.op is Ops.INS and u.arg is AMDOps.SPILL)
+    fill = sum(1 for u in lin if u.op is Ops.INS and u.arg is AMDOps.FILL)
+    print(f"  {n:>5}  TC={uses_tc}  WMMA_ins={wmma}  MULACC={mulacc}  SPILL={spill}  FILL={fill}")
     print(f"        opts={opts}")
     print(f"        local={loc}  global={glob}  est_ops={est.ops}  est_mem={est.mem}")
 
