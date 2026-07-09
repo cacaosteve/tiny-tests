@@ -5,9 +5,10 @@ Run from ~/tinygrad with venv active. Sets DEV itself per backend, so DON'T pref
 
   AMD=1 python ~/github/tiny-tests/amd_wmma_vs_llvm.py
   AMD=1 python ~/github/tiny-tests/amd_wmma_vs_llvm.py --sizes 1024,2048,4096
+  DEV=AMD:AMD DEBUG=0 python ~/github/tiny-tests/amd_wmma_vs_llvm.py --worker AMD:AMD --sizes 4096
 
 Each backend runs in its own subprocess because Device.DEFAULT is fixed after first import.
-Prints one clean GFLOPS line per (backend, size); no compiler/binary dumps (forces DEBUG=0).
+Worker exits with os._exit(0) after sync to avoid HCQ teardown timeouts on gfx11.
 """
 from __future__ import annotations
 import argparse, os, subprocess, sys, time
@@ -27,6 +28,8 @@ def _worker(dev: str, sizes: list[int], warmup: int, iters: int) -> None:
     Device["AMD"].synchronize()
     sec = (time.perf_counter() - t0) / iters
     print(f"  DEV={dev:<8s} [{ren:<12s}]  {n:>5}  {2*n**3/sec/1e9:8.0f} GFLOPS  ({sec*1e3:7.2f} ms/iter)", flush=True)
+  Device["AMD"].synchronize()
+  os._exit(0)
 
 def main() -> int:
   p = argparse.ArgumentParser(description="half->float GEMM ASM vs LLVM")
