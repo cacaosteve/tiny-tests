@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Half-precision matmul GFLOPS (WMMA / TC path). Run from ~/tinygrad with venv active.
 
-  python ~/github/tiny-tests/amd_wmma_bench.py
-  python ~/github/tiny-tests/amd_wmma_bench.py --compare-tc
+  python ~/github/tiny-tests/amd_wmma_bench.py --inspect --sizes 4096
+  python ~/github/tiny-tests/amd_wmma_vs_llvm.py          # ASM vs LLVM timing (preferred)
+  python ~/github/tiny-tests/amd_wmma_bench.py --check --sizes 512,1024,4096
   python ~/github/tiny-tests/amd_wmma_bench.py --both --compare-tc
-  python ~/github/tiny-tests/amd_wmma_bench.py --check-wmma --both
-  python ~/github/tiny-tests/amd_wmma_bench.py --inspect --sizes 4096 --both
+
+Do not prefix DEV= when using --both / --check (each subprocess sets DEV itself).
 
 Multi-backend / multi-TC runs use subprocess (Device is fixed after first import).
 """
@@ -24,23 +25,11 @@ def _setup_path() -> None:
     sys.path.insert(0, root)
 
 
-def _realized_ast(r):
+def _schedule_ast(r):
   from tinygrad import Tensor
-  from tinygrad.uop.ops import UOp, Ops
-  from tinygrad.device import Buffer
-  from tinygrad.engine.realize import run_linear
-
   if not isinstance(r, list):
     r = [r]
-  linear, var_vals = Tensor.linear_with_vars(*r)
-  run_linear(UOp(Ops.LINEAR, src=linear.src[:-1]), var_vals)
-  last_call = linear.src[-1]
-  ast = last_call.src[0]
-  last_bufs = [s.buffer for s in last_call.src[1:] if s.op is not Ops.BIND]
-  bufs = [Buffer(x.device, x.size, x.dtype).allocate() if i < len(ast.src) else x for i, x in enumerate(last_bufs)]
-  for b in bufs:
-    b.ensure_allocated()
-  return ast, bufs
+  return r[0].schedule_linear().src[-1].src[0]
 
 
 def _has_wmma(pu) -> bool:
@@ -61,8 +50,7 @@ def _wmma_triggered(n: int) -> bool:
 
   a = Tensor.rand(n, n, dtype=dtypes.half)
   b = Tensor.rand(n, n, dtype=dtypes.half)
-  r = a.matmul(b, dtype=dtypes.float)
-  ast, _ = _realized_ast(r)
+  ast = _schedule_ast(a.matmul(b, dtype=dtypes.float))
   ast = ast.replace(arg=replace(ast.arg, opts_to_apply=(Opt(OptOps.TC, 0, (0, 0, 1)),)))
   pu = to_program(ast, Device[Device.DEFAULT].renderer)
   return _has_wmma(pu)
@@ -86,7 +74,7 @@ def _program_stats(n: int, tc: int | None = None):
   with Context(**ctx):
     a = Tensor.empty(n, n, dtype=dtypes.half, device="AMD")
     b = Tensor.empty(n, n, dtype=dtypes.half, device="AMD")
-    ast, _ = _realized_ast(_matmul_expr(a, b))
+    ast = _schedule_ast(_matmul_expr(a, b))
     ren = Device[Device.DEFAULT].renderer
     try:
       prg = to_program(ast, ren)
@@ -139,7 +127,11 @@ def inspect(dev: str, sizes: list[int], tc: int) -> None:
     lin = list(prg.src[1].src)
     spill = sum(1 for u in lin if u.op is Ops.INS and u.arg is AMDOps.SPILL)
     fill = sum(1 for u in lin if u.op is Ops.INS and u.arg is AMDOps.FILL)
+    lload = sum(1 for u in lin if u.op is Ops.INS and u.arg is AMDOps.LLOAD)
+    lstore = sum(1 for u in lin if u.op is Ops.INS and u.arg is AMDOps.LSTORE)
+    barrier = sum(1 for u in lin if u.op is Ops.INS and u.arg is AMDOps.BARRIER)
     print(f"  {n:>5}  TC={uses_tc}  WMMA_ins={wmma}  MULACC={mulacc}  SPILL={spill}  FILL={fill}")
+    print(f"        LLOAD={lload}  LSTORE={lstore}  BARRIER={barrier}")
     print(f"        opts={opts}")
     print(f"        local={loc}  global={glob}  est_ops={est.ops}  est_mem={est.mem}")
 
@@ -164,13 +156,38 @@ def bench(dev: str, sizes: list[int], warmup: int, iters: int, tc: int) -> None:
     Device["AMD"].synchronize()
     sec = (time.perf_counter() - t0) / iters
     gflops = 2 * n**3 / sec / 1e9
-    print(f"  {n:>5}  {gflops:8.0f} GFLOPS  ({sec*1000:.2f} ms/iter)  half→float  [{_tc_tag(n, tc)}]")
+    print(f"  {n:>5}  {gflops:8.0f} GFLOPS  ({sec*1000:.2f} ms/iter)  half→float")
+
+
+def check(dev: str, sizes: list[int], tc: int) -> None:
+  _setup_path()
+  os.environ["DEV"] = dev
+  os.environ["TC"] = str(tc)
+  from tinygrad import Device, Tensor, dtypes
+
+  ren = type(Device[Device.DEFAULT].renderer).__name__
+  print(f"\n=== check DEV={dev} TC={tc} renderer={ren} ===")
+  ok = True
+  for n in sizes:
+    a = Tensor.randn(n, n, dtype=dtypes.half, device="AMD").realize()
+    b = Tensor.randn(n, n, dtype=dtypes.half, device="AMD").realize()
+    out = _matmul_expr(a, b).realize()
+    ref = (a.float() @ b.float()).realize()
+    max_err = (out - ref).abs().max().item()
+    mse = (out - ref).square().mean().item()
+    good = max_err < 1.0
+    ok = ok and good
+    mark = "ok" if good else "FAIL"
+    print(f"  {n:>5}  max_abs_err={max_err:.4e}  mse={mse:.4e}  [{mark}]")
+  if not ok:
+    raise SystemExit(1)
 
 
 def _env(dev: str, tc: int | None = None) -> dict[str, str]:
   e = os.environ.copy()
   e["DEV"] = dev
   e["TINYGRAD"] = os.environ.get("TINYGRAD", os.getcwd())
+  e.setdefault("DEBUG", "0")
   if tc is not None:
     e["TC"] = str(tc)
   return e
@@ -192,8 +209,12 @@ def _worker_main(argv: list[str] | None = None) -> None:
   p.add_argument("--warmup", type=int, default=3)
   p.add_argument("--iters", type=int, default=10)
   p.add_argument("--check-wmma", action="store_true")
+  p.add_argument("--check", action="store_true", help="half→float matmul vs float reference")
   p.add_argument("--inspect", action="store_true")
   args = p.parse_args(argv)
+  if args.check:
+    check(args.dev, [int(x) for x in args.sizes.split(",") if x.strip()], args.tc)
+    return
   if args.check_wmma:
     print(f"DEV={args.dev} forced TC WMMA on 512²: {_wmma_triggered(512)}")
     return
@@ -216,6 +237,7 @@ def main() -> int:
   p.add_argument("--both", action="store_true", help="run DEV=AMD:AMD then DEV=AMD (LLVM)")
   p.add_argument("--compare-tc", action="store_true", help="bench TC=1 then TC=0")
   p.add_argument("--check-wmma", action="store_true", help="forced TC emits WMMA on 512² tile")
+  p.add_argument("--check", action="store_true", help="half→float matmul vs float reference")
   p.add_argument("--inspect", action="store_true", help="dump schedule/WMMA stats (no timing)")
   args = p.parse_args()
 
@@ -223,6 +245,12 @@ def main() -> int:
   devs = ["AMD:AMD", "AMD"] if args.both else [os.environ.get("DEV", "AMD:AMD")]
   tcs = [1, 0] if args.compare_tc else [int(os.environ.get("TC", "1"))]
   rc = 0
+
+  if args.check:
+    for dev in devs:
+      for tc in tcs:
+        rc = _spawn(["--check", *sizes_arg], dev=dev, tc=tc) or rc
+    return rc
 
   if args.check_wmma:
     for dev in devs:
