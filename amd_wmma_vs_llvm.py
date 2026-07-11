@@ -29,7 +29,7 @@ def _worker(dev: str, sizes: list[int], warmup: int, iters: int, hand: bool) -> 
         print(f"  DEV={dev:<8s} [{label:<12s}]  {n:>5}  SKIP (can_use=False)", flush=True)
         continue
       # Schedule once; time only run_linear (same as amd_hand_wmma / run_matmul).
-      c = rdna3_wmma_gemm(a, b)
+      c = rdna3_wmma_gemm(a, b, out_dtype=dtypes.float)
       linear = c.schedule_linear()
       def run():
         run_linear(linear)
@@ -63,15 +63,18 @@ def main() -> int:
     return 0
 
   rc = 0
-  jobs = [("AMD:AMD", False), ("AMD", False)]
-  if args.hand: jobs.append(("AMD:AMD", True))
-  for dev, hand in jobs:
+  # AMD:AMD codegen path disables matmul hand dispatch so we still see the auto gap.
+  # HAND column uses the custom_kernel directly (float out, matches matmul dtype=float).
+  jobs = [("AMD:AMD", False, {"RDNA3_WMMA_GEMM": "0"}), ("AMD", False, {})]
+  if args.hand: jobs.append(("AMD:AMD", True, {}))
+  for dev, hand, extra_env in jobs:
     tag = "HAND" if hand else dev
     print(f"\n=== {tag} ===", flush=True)
     env = os.environ.copy()
     env["DEV"] = dev
     env["DEBUG"] = "0"
     env.setdefault("TINYGRAD", os.path.expanduser("~/tinygrad"))
+    env.update(extra_env)
     cmd = [sys.executable, SCRIPT, "--worker", dev,
            "--sizes", args.sizes, "--warmup", str(args.warmup), "--iters", str(args.iters)]
     if hand: cmd.append("--worker-hand")
