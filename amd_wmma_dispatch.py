@@ -28,6 +28,7 @@ def main() -> int:
   else: os.environ.setdefault("RDNA3_WMMA_GEMM", "1")
 
   from tinygrad import Tensor, dtypes, Device
+  from tinygrad.engine.realize import run_linear
   from extra.gemm.rdna3_asm_wmma_gemm import can_use_rdna3_wmma_gemm
 
   ren = type(Device["AMD"].renderer).__name__
@@ -52,10 +53,13 @@ def main() -> int:
     a = Tensor.randn(n, n, dtype=dtypes.half, device="AMD").realize()
     b = Tensor.randn(n, n, dtype=dtypes.half, device="AMD").realize()
     print(f"  n={n} can_use={can_use_rdna3_wmma_gemm(a,b)}", flush=True)
-    for _ in range(args.warmup): a.matmul(b, dtype=dtypes.float).realize()
+    # Schedule once (matmul→hand custom_kernel), time only run_linear — same as amd_hand_wmma.
+    c = a.matmul(b, dtype=dtypes.float)
+    linear = c.schedule_linear()
+    for _ in range(args.warmup): run_linear(linear)
     Device["AMD"].synchronize()
     t0 = time.perf_counter()
-    for _ in range(args.iters): a.matmul(b, dtype=dtypes.float).realize()
+    for _ in range(args.iters): run_linear(linear)
     Device["AMD"].synchronize()
     sec = (time.perf_counter() - t0) / args.iters
     print(f"  {n:>5}  {2*n**3/sec/1e9:8.0f} GFLOPS  ({sec*1e3:7.2f} ms/iter)", flush=True)
