@@ -24,7 +24,7 @@ from datetime import datetime
 TINYGRAD = os.environ.get("TINYGRAD", os.path.expanduser("~/tinygrad"))
 HERE = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
-KERNEL = os.path.join(HERE, "rdna3_asm_wmma_matmul.py")
+KERNEL = os.path.join(TINYGRAD, "extra/gemm/rdna3_asm_wmma_gemm.py")
 LOG_PATH = os.path.join(HERE, "amd_hand_wmma.last.log")
 DEV_ASM = "AMD:AMD"
 TIMEOUT_RC = 124
