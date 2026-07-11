@@ -17,6 +17,7 @@ SCRIPT = os.path.abspath(__file__)
 
 def _worker(dev: str, sizes: list[int], warmup: int, iters: int, hand: bool) -> None:
   from tinygrad import Tensor, dtypes, Device
+  from tinygrad.engine.realize import run_linear
   ren = type(Device["AMD"].renderer).__name__
   label = "HAND" if hand else ren
   for n in sizes:
@@ -27,9 +28,13 @@ def _worker(dev: str, sizes: list[int], warmup: int, iters: int, hand: bool) -> 
       if not can_use_rdna3_wmma_gemm(a, b):
         print(f"  DEV={dev:<8s} [{label:<12s}]  {n:>5}  SKIP (can_use=False)", flush=True)
         continue
-      def run(): return rdna3_wmma_gemm(a, b).realize()
+      # Schedule once; time only run_linear (same as amd_hand_wmma / run_matmul).
+      c = rdna3_wmma_gemm(a, b)
+      linear = c.schedule_linear()
+      def run():
+        run_linear(linear)
     else:
-      def run(): return a.matmul(b, dtype=dtypes.float).realize()
+      def run(): a.matmul(b, dtype=dtypes.float).realize()
     for _ in range(warmup): run()
     Device["AMD"].synchronize()
     t0 = time.perf_counter()
