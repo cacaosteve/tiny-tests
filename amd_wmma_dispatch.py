@@ -1,39 +1,41 @@
 #!/usr/bin/env python3
-"""Time Tensor.matmul on AMD:AMD (hand WMMA auto-dispatch when eligible).
+"""Time half GEMM on AMD:AMD — explicit hand WMMA vs codegen Tensor.matmul.
+
+Hand WMMA is not wired into Tensor.matmul; call rdna3_wmma_gemm explicitly.
 
 Run from ~/tinygrad with venv active:
 
   python ~/github/tiny-tests/amd_wmma_dispatch.py
   python ~/github/tiny-tests/amd_wmma_dispatch.py --sizes 1024,2048,4096
-  python ~/github/tiny-tests/amd_wmma_dispatch.py --no-dispatch   # force codegen path
+  python ~/github/tiny-tests/amd_wmma_dispatch.py --codegen   # Tensor.matmul only
   python ~/github/tiny-tests/amd_wmma_dispatch.py --check
 """
 from __future__ import annotations
 import argparse, os, sys, time
 
 def main() -> int:
-  p = argparse.ArgumentParser(description="AMD:AMD matmul dispatch bench")
+  p = argparse.ArgumentParser(description="AMD:AMD hand WMMA vs codegen matmul bench")
   p.add_argument("--sizes", default="1024,2048,4096")
   p.add_argument("--warmup", type=int, default=3)
   p.add_argument("--iters", type=int, default=10)
-  p.add_argument("--no-dispatch", action="store_true", help="RDNA3_WMMA_GEMM=0 (codegen only)")
+  p.add_argument("--codegen", action="store_true", help="use Tensor.matmul (codegen WMMA), not hand kernel")
+  p.add_argument("--no-dispatch", action="store_true", help=argparse.SUPPRESS)  # old flag alias
   p.add_argument("--check", action="store_true", help="correctness vs numpy at 512")
   args = p.parse_args()
+  if args.no_dispatch: args.codegen = True
 
   root = os.environ.get("TINYGRAD", os.path.expanduser("~/tinygrad"))
   if root not in sys.path: sys.path.insert(0, root)
   os.environ["DEV"] = "AMD:AMD"
   os.environ["DEBUG"] = "0"
-  if args.no_dispatch: os.environ["RDNA3_WMMA_GEMM"] = "0"
-  else: os.environ.setdefault("RDNA3_WMMA_GEMM", "1")
 
   from tinygrad import Tensor, dtypes, Device
   from tinygrad.engine.realize import run_linear
-  from extra.gemm.rdna3_asm_wmma_gemm import can_use_rdna3_wmma_gemm
+  from extra.gemm.rdna3_asm_wmma_gemm import can_use_rdna3_wmma_gemm, rdna3_wmma_gemm
 
   ren = type(Device["AMD"].renderer).__name__
-  mode = "codegen" if args.no_dispatch else "dispatch"
-  print(f"DEV=AMD:AMD [{ren}] mode={mode} RDNA3_WMMA_GEMM={os.environ.get('RDNA3_WMMA_GEMM')}", flush=True)
+  mode = "codegen" if args.codegen else "hand"
+  print(f"DEV=AMD:AMD [{ren}] mode={mode}", flush=True)
 
   if args.check:
     import numpy as np
@@ -43,7 +45,7 @@ def main() -> int:
     B = rng.standard_normal((n, n)).astype(np.float16)
     ref = A.astype(np.float32) @ B.astype(np.float32)
     a, b = Tensor(A), Tensor(B)
-    got = a.matmul(b, dtype=dtypes.float).realize().numpy()
+    got = (a.matmul(b, dtype=dtypes.float) if args.codegen else rdna3_wmma_gemm(a, b, out_dtype=dtypes.float)).realize().numpy()
     err = float(np.max(np.abs(got - ref)))
     print(f"check {n}: max abs err={err:.4e}  can_use={can_use_rdna3_wmma_gemm(a,b)}", flush=True)
     if err > 0.05: raise SystemExit(f"FAIL err={err}")
@@ -53,8 +55,7 @@ def main() -> int:
     a = Tensor.randn(n, n, dtype=dtypes.half, device="AMD").realize()
     b = Tensor.randn(n, n, dtype=dtypes.half, device="AMD").realize()
     print(f"  n={n} can_use={can_use_rdna3_wmma_gemm(a,b)}", flush=True)
-    # Schedule once (matmul→hand custom_kernel), time only run_linear — same as amd_hand_wmma.
-    c = a.matmul(b, dtype=dtypes.float)
+    c = a.matmul(b, dtype=dtypes.float) if args.codegen else rdna3_wmma_gemm(a, b, out_dtype=dtypes.float)
     linear = c.schedule_linear()
     for _ in range(args.warmup): run_linear(linear)
     Device["AMD"].synchronize()
