@@ -19,11 +19,28 @@ Runs (in order):
 
 ~15–45 min depending on box. Skip GEMM: `--no-bench`. Add full ops overnight: `--full-ops`.
 
+## Half GEMM / TC_LDS_AB (after asm pull)
+
+Address spills hang the display GPU — this script aborts if `SPILL!=0`.
+
+```bash
+cd ~/tinygrad && source venv/bin/activate
+git pull   # amd-asm-backend
+python ~/github/tiny-tests/amd_lds_bench.py
+# spill/coop only:
+python ~/github/tiny-tests/amd_lds_bench.py --counts-only
+# + LLVM compare:
+python ~/github/tiny-tests/amd_lds_bench.py --vs-llvm
+```
+
+Or in-tree: `DEV=AMD:AMD N=4096 CNT=3 PYTHONPATH=. ./tiny-tests --bench --bench-lds`
+
 ## Individual scripts
 
 | Script | When | Command |
 |--------|------|---------|
 | **`amd_gate.py`** | Pre-PR / post-pull validation | `python ~/github/tiny-tests/amd_gate.py` |
+| **`amd_lds_bench.py`** | Safe TC_LDS_AB mse + default/LDS GFLOPS | `python ~/github/tiny-tests/amd_lds_bench.py` |
 | `amd_smoke.py` | Quick 2-test check | `DEV=AMD:AMD python ~/github/tiny-tests/amd_smoke.py` |
 | `amd_gemm_bench.py` | Perf only | `python ~/github/tiny-tests/amd_gemm_bench.py --both` |
 | `amd_wmma_bench.py` | Half matmul / WMMA (TC) perf + correctness | `python ~/github/tiny-tests/amd_wmma_bench.py --check --sizes 512,1024` |
