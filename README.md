@@ -19,18 +19,28 @@ Runs (in order):
 
 ~15–45 min depending on box. Skip GEMM: `--no-bench`. Add full ops overnight: `--full-ops`.
 
-## Half GEMM / TC_LDS_AB (after asm pull)
+## Half GEMM / next HW check (UPCAST16)
+
+Best lever after ~28k default. Offline spill-free with remat; previously hung gfx1100.
+
+```bash
+cd ~/tinygrad && source venv/bin/activate
+git pull
+cd ~/github/tiny-tests && git pull
+python ~/github/tiny-tests/amd_upcast_bench.py
+# spill/WMMA gate only:
+python ~/github/tiny-tests/amd_upcast_bench.py --counts-only
+```
+
+Or in-tree: `DEV=AMD:AMD N=4096 CNT=3 PYTHONPATH=. ./tiny-tests --upcast16`
+
+## Half GEMM / TC_LDS_AB (correct but ~3k @4096 — not the perf path)
 
 Address spills hang the display GPU — this script aborts if `SPILL!=0`.
 
 ```bash
-cd ~/tinygrad && source venv/bin/activate
-git pull   # amd-asm-backend
 python ~/github/tiny-tests/amd_lds_bench.py
-# spill/coop only:
 python ~/github/tiny-tests/amd_lds_bench.py --counts-only
-# + LLVM compare:
-python ~/github/tiny-tests/amd_lds_bench.py --vs-llvm
 ```
 
 Or in-tree: `DEV=AMD:AMD N=4096 CNT=3 PYTHONPATH=. ./tiny-tests --bench --bench-lds`
@@ -40,6 +50,7 @@ Or in-tree: `DEV=AMD:AMD N=4096 CNT=3 PYTHONPATH=. ./tiny-tests --bench --bench-
 | Script | When | Command |
 |--------|------|---------|
 | **`amd_gate.py`** | Pre-PR / post-pull validation | `python ~/github/tiny-tests/amd_gate.py` |
+| **`amd_upcast_bench.py`** | **Next:** UPCAST16 vs default (spill gate + mse + GFLOPS) | `python ~/github/tiny-tests/amd_upcast_bench.py` |
 | **`amd_lds_bench.py`** | Safe TC_LDS_AB mse + default/LDS GFLOPS | `python ~/github/tiny-tests/amd_lds_bench.py` |
 | `amd_smoke.py` | Quick 2-test check | `DEV=AMD:AMD python ~/github/tiny-tests/amd_smoke.py` |
 | `amd_gemm_bench.py` | Perf only | `python ~/github/tiny-tests/amd_gemm_bench.py --both` |

@@ -21,6 +21,7 @@ SCRIPT = os.path.abspath(__file__)
 CONFIGS = {
   "default": ("AMD:AMD", False, {}),
   "up4": ("AMD:AMD", False, {"TC_UPCAST": "4"}),
+  "up16": ("AMD:AMD", False, {"TC_UPCAST": "4", "TC_UPCAST_TILES": "16"}),
   "lds": ("AMD:AMD", False, {"TC_LDS_AB": "1"}),
   "lds_up4": ("AMD:AMD", False, {"TC_LDS_AB": "1", "TC_UPCAST": "4"}),
   "hip": ("AMD", False, {}),
