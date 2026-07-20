@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Safe UPCAST16 (4×4 / 16 WMMA) half-GEMM check + bench for gfx1100.
+"""UPCAST16 (4×4 / 16 WMMA) half-GEMM — UNSAFE on gfx1100 display GPUs.
 
-Best next lever after ~28k default (was hang-class; remat made it spill-free offline).
+2026-07-20: spill-free offline, but still TDR/disconnects the desktop.
+Do not run on a machine driving a display. Default tiles=8 (~28k) is the safe path.
 
-  cd ~/tinygrad && source venv/bin/activate
+  # refuse by default
   python ~/github/tiny-tests/amd_upcast_bench.py
 
-Aborts if SPILL/FILL nonzero or mse bad. Stop if the desktop disconnects.
+  # only on compute-only / SSH-recovery boxes after you accept the risk:
+  ALLOW_UPCAST16=1 python ~/github/tiny-tests/amd_upcast_bench.py
 """
 from __future__ import annotations
 import argparse, os, sys
@@ -103,9 +105,18 @@ def main() -> int:
   p.add_argument("--skip-mse", action="store_true")
   args = p.parse_args()
 
+  if os.environ.get("ALLOW_UPCAST16", "0") != "1":
+    print(
+      "REFUSED: UPCAST16 disconnects gfx1100 display GPUs (2026-07-20) even with SPILL=0 offline.\n"
+      "Stay on default tiles=8 (~28k GFLOPS).\n"
+      "Override only on compute-only boxes: ALLOW_UPCAST16=1 python ~/github/tiny-tests/amd_upcast_bench.py",
+      file=sys.stderr,
+    )
+    return 2
+
   os.environ.setdefault("DEV", "AMD:AMD")
   print(f"DEV={os.environ.get('DEV')}  N={args.n}  CNT={args.cnt}", flush=True)
-  print("mode=UPCAST16 (TC_UPCAST=4 TC_UPCAST_TILES=16)", flush=True)
+  print("WARNING: ALLOW_UPCAST16=1 — may TDR/disconnect", flush=True)
 
   _set_upcast16(False)
   d = _counts(256, "default@256")
